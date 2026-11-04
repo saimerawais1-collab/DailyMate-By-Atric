@@ -1,14 +1,17 @@
 
 
 
+
 import logging
 
 from telegram import Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    TypeHandler,
     ContextTypes,
     filters,
 )
@@ -71,25 +74,28 @@ def user_is_admin(user_id):
     return user_id in ADMIN_IDS
 
 
-async def maintenance_callback_guard(update, context):
-    query = update.callback_query
-
-    if not query:
-        return False
+async def maintenance_guard(update, context):
+    if not is_maintenance_enabled(context.bot_data):
+        return
 
     user = update.effective_user
 
-    if (
-        is_maintenance_enabled(context.bot_data)
-        and not user_is_admin(user.id)
-    ):
+    if user and user_is_admin(user.id):
+        return
+
+    query = update.callback_query
+
+    if query:
         await query.answer(
             "Bot is under maintenance. Please try again later.",
             show_alert=True,
         )
-        return True
+    elif update.effective_message:
+        await update.effective_message.reply_text(
+            maintenance_message()
+        )
 
-    return False
+    raise ApplicationHandlerStop
 
 
 async def cancel_command(update, context):
@@ -118,15 +124,6 @@ async def help_button_callback(update, context):
 
 async def message_router(update, context):
     if not update.message:
-        return
-
-    user = update.effective_user
-
-    if (
-        is_maintenance_enabled(context.bot_data)
-        and not user_is_admin(user.id)
-    ):
-        await update.message.reply_text(maintenance_message())
         return
 
     if context.user_data.get("awaiting_feedback"):
@@ -170,6 +167,13 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Global maintenance protection.
+    # This runs before commands and callback handlers.
+    app.add_handler(
+        TypeHandler(Update, maintenance_guard),
+        group=-1,
+    )
+
     # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("menu", menu_command))
@@ -184,15 +188,6 @@ def main():
     app.add_handler(CommandHandler("adminhelp", admin_help))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("maintenance", maintenance_command))
-
-    # Maintenance guard for all menu callbacks
-    app.add_handler(
-        CallbackQueryHandler(
-            maintenance_callback_guard,
-            block=False,
-        ),
-        group=-1,
-    )
 
     # Main menu callbacks
     app.add_handler(CallbackQueryHandler(ai_callback, pattern=r"^ai$"))
