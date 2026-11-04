@@ -1,8 +1,13 @@
 
-from telegram import Update
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import ContextTypes
 
-from database import get_usage, increment_usage, is_premium
+from database import get_usage, is_premium
 from config import FREE_DAILY_VOICE_LIMIT
 
 
@@ -14,12 +19,25 @@ async def voice_callback(
     await query.answer()
 
     keyboard = [
-        [{"text": "🎙 Voice to Text", "callback_data": "voice_transcribe"}],
-        [{"text": "🔊 Text to Speech", "callback_data": "voice_tts"}],
-        [{"text": "📝 Voice Summary", "callback_data": "voice_summary"}],
+        [
+            InlineKeyboardButton(
+                "🎙 Voice to Text",
+                callback_data="voice_transcribe",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔊 Text to Speech",
+                callback_data="voice_tts",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📝 Voice Summary",
+                callback_data="voice_summary",
+            )
+        ],
     ]
-
-    from telegram import InlineKeyboardMarkup
 
     await query.message.reply_text(
         "🎙 Voice Tools\n\nChoose a service:",
@@ -35,18 +53,24 @@ async def voice_action_callback(
     await query.answer()
 
     action = query.data.replace("voice_", "", 1)
+
+    if action not in {"transcribe", "tts", "summary"}:
+        await query.message.reply_text("Unknown voice tool.")
+        return
+
+    context.user_data["mode"] = "voice"
     context.user_data["voice_action"] = action
 
     if action == "tts":
         await query.message.reply_text(
-            "🔊 Send the text you want converted to speech.\n"
-            "TTS provider integration will be added later."
+            "🔊 Send the text you want converted to speech.\n\n"
+            "TTS provider integration is not connected yet."
         )
     else:
         await query.message.reply_text(
             "🎙 Send a voice message or audio file.\n\n"
-            "Voice transcription provider integration "
-            "will be added in the next stage."
+            "Voice transcription and summary services "
+            "are not connected yet."
         )
 
 
@@ -54,11 +78,13 @@ async def voice_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    user_id = update.effective_user.id
+    if not update.message:
+        return
 
+    user_id = update.effective_user.id
     action = context.user_data.get("voice_action")
 
-    if not action:
+    if action not in {"transcribe", "tts", "summary"}:
         return
 
     premium = is_premium(user_id)
@@ -73,27 +99,30 @@ async def voice_message(
         return
 
     if action == "tts":
-        text = update.message.text
-
-        if not text:
+        if not update.message.text:
             await update.message.reply_text(
                 "Please send text for speech conversion."
             )
             return
 
         await update.message.reply_text(
-            "🔊 Text-to-speech integration is not connected yet."
+            "🔊 Text-to-speech provider is not connected yet."
         )
 
     else:
         if not update.message.voice and not update.message.audio:
             await update.message.reply_text(
-                "Please send a voice message or audio file."
+                "Please send a Telegram voice message or audio file."
             )
             return
 
-        await update.message.reply_text(
-            "🎙 Voice processing service is not connected yet."
-        )
+        if action == "transcribe":
+            await update.message.reply_text(
+                "🎙 Voice transcription provider is not connected yet."
+            )
+        else:
+            await update.message.reply_text(
+                "📝 Voice summary provider is not connected yet."
+            )
 
-    increment_usage(user_id, "voice")
+    # Do not consume daily voice usage while the provider is unavailable.
