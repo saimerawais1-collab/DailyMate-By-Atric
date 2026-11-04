@@ -1,10 +1,11 @@
 
+
 import asyncio
 from groq import Groq
+
 from config import GROQ_API_KEY
 
-
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "openai/gpt-oss-120b"
 
 
 def _generate_response(prompt: str) -> str:
@@ -28,7 +29,10 @@ def _generate_response(prompt: str) -> str:
                     "Reply in the language the user prefers."
                 ),
             },
-            {"role": "user", "content": prompt},
+            {
+                "role": "user",
+                "content": prompt,
+            },
         ],
         temperature=0.7,
         max_tokens=1000,
@@ -39,7 +43,10 @@ def _generate_response(prompt: str) -> str:
 
 async def ask_ai(prompt: str) -> str:
     try:
-        return await asyncio.to_thread(_generate_response, prompt)
+        return await asyncio.to_thread(
+            _generate_response,
+            prompt,
+        )
     except Exception as error:
         print(f"Groq API error: {error}")
         return (
