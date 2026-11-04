@@ -1,8 +1,9 @@
 
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from services.groq_service import ask_ai
+from services.groq_service import ask_ai, AIServiceError
 from database import get_usage, increment_usage, is_premium
 from config import FREE_DAILY_AI_LIMIT
 
@@ -45,10 +46,27 @@ async def ai_message(
         )
         return
 
-    await update.message.reply_text("🤔 Thinking...")
+    status_message = await update.message.reply_text(
+        "🤔 Thinking..."
+    )
 
-    response = await ask_ai(prompt)
+    try:
+        response = await ask_ai(prompt)
+
+    except AIServiceError as error:
+        await status_message.edit_text(
+            f"⚠️ {error}\n\n"
+            "Your daily AI limit has not been used."
+        )
+        return
+
+    except Exception:
+        await status_message.edit_text(
+            "⚠️ Something went wrong. Please try again later.\n\n"
+            "Your daily AI limit has not been used."
+        )
+        return
 
     increment_usage(user_id, "ai")
 
-    await update.message.reply_text(response)
+    await status_message.edit_text(response)
