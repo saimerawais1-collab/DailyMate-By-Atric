@@ -1,5 +1,6 @@
 
 
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -7,7 +8,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
-from services.groq_service import ask_ai
+from services.groq_service import ask_ai, AIServiceError
 from database import get_usage, increment_usage, is_premium
 from config import FREE_DAILY_TEXT_LIMIT
 
@@ -44,7 +45,7 @@ async def text_callback(
         ],
         [
             InlineKeyboardButton("📱 Caption", callback_data="text_caption"),
-            InlineKeyboardButton("#️⃣ Hashtags", callback_data="text_hashtags"),
+            InlineKeyboardButton(" #️⃣ Hashtags", callback_data="text_hashtags"),
         ],
         [
             InlineKeyboardButton("✍️ Rewrite", callback_data="text_rewrite"),
@@ -112,13 +113,30 @@ async def text_message(
 
     prompt = f"{TEXT_ACTIONS[action]}\n\n{text}"
 
-    await update.message.reply_text("✍️ Processing...")
+    status_message = await update.message.reply_text(
+        "✍️ Processing..."
+    )
 
-    result = await ask_ai(prompt)
+    try:
+        result = await ask_ai(prompt)
+
+    except AIServiceError as error:
+        await status_message.edit_text(
+            f"⚠️ {error}\n\n"
+            "Your daily Text Tools limit has not been used."
+        )
+        return
+
+    except Exception:
+        await status_message.edit_text(
+            "⚠️ Something went wrong. Please try again later.\n\n"
+            "Your daily Text Tools limit has not been used."
+        )
+        return
 
     increment_usage(user_id, "text")
 
-    await update.message.reply_text(result)
+    await status_message.edit_text(result)
 
     context.user_data.pop("text_action", None)
     context.user_data["mode"] = None
