@@ -1,9 +1,15 @@
 
+import sqlite3
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import ADMIN_IDS, DATABASE_PATH
-import sqlite3
+from database import get_today
+from services.maintenance_service import (
+    is_maintenance_enabled,
+    set_maintenance,
+)
 
 
 def is_admin(user_id: int) -> bool:
@@ -14,9 +20,7 @@ async def admin_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    user_id = update.effective_user.id
-
-    if not is_admin(user_id):
+    if not is_admin(update.effective_user.id):
         await update.message.reply_text(
             "⛔ You are not authorized to use admin commands."
         )
@@ -66,10 +70,15 @@ async def stats_command(
             ).fetchone()[0]
 
             today_usage = conn.execute(
-                "SELECT COALESCE(SUM(ai_count), 0), "
-                "COALESCE(SUM(text_count), 0), "
-                "COALESCE(SUM(voice_count), 0) "
-                "FROM usage WHERE usage_date = date('now')"
+                """
+                SELECT
+                    COALESCE(SUM(ai_count), 0),
+                    COALESCE(SUM(text_count), 0),
+                    COALESCE(SUM(voice_count), 0)
+                FROM usage
+                WHERE usage_date = ?
+                """,
+                (get_today(),),
             ).fetchone()
 
         await update.message.reply_text(
@@ -96,10 +105,12 @@ async def maintenance_command(
         await update.message.reply_text("⛔ Access denied.")
         return
 
-    current = context.bot_data.get("maintenance", False)
-    context.bot_data["maintenance"] = not current
+    current = is_maintenance_enabled(context.bot_data)
+    new_status = not current
 
-    status = "ON" if not current else "OFF"
+    set_maintenance(context.bot_data, new_status)
+
+    status = "ON" if new_status else "OFF"
 
     await update.message.reply_text(
         f"🔧 Maintenance mode: {status}"
