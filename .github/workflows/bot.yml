@@ -1,4 +1,3 @@
-
 name: Daily-Mate Telegram Bot
 
 on:
@@ -6,6 +5,10 @@ on:
   push:
     branches:
       - main
+
+concurrency:
+  group: daily-mate-telegram-bot
+  cancel-in-progress: true
 
 jobs:
   run-bot:
