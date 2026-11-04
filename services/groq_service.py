@@ -1,5 +1,6 @@
 
 
+
 import asyncio
 from groq import Groq
 
@@ -8,12 +9,15 @@ from config import GROQ_API_KEY
 MODEL_NAME = "openai/gpt-oss-120b"
 
 
+class AIServiceError(Exception):
+    """Raised when the AI service cannot generate a response."""
+
+
 def _generate_response(prompt: str) -> str:
     if not GROQ_API_KEY:
-        return (
-            "AI service is not configured yet.\n\n"
-            "The administrator needs to add the GROQ_API_KEY "
-            "secret in GitHub."
+        raise AIServiceError(
+            "AI service is not configured. "
+            "Please contact the administrator."
         )
 
     client = Groq(api_key=GROQ_API_KEY)
@@ -38,7 +42,12 @@ def _generate_response(prompt: str) -> str:
         max_tokens=1000,
     )
 
-    return response.choices[0].message.content or "No response."
+    result = response.choices[0].message.content
+
+    if not result:
+        raise AIServiceError("The AI returned an empty response.")
+
+    return result
 
 
 async def ask_ai(prompt: str) -> str:
@@ -47,9 +56,11 @@ async def ask_ai(prompt: str) -> str:
             _generate_response,
             prompt,
         )
+    except AIServiceError:
+        raise
     except Exception as error:
         print(f"Groq API error: {error}")
-        return (
-            "Sorry, AI service is temporarily unavailable. "
+        raise AIServiceError(
+            "AI service is temporarily unavailable. "
             "Please try again later."
-        )
+        ) from error
