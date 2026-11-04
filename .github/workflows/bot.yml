@@ -26,4 +26,5 @@ jobs:
       - name: Start Daily-Mate
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python bot.py
