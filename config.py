@@ -23,7 +23,7 @@ FREE_DAILY_VOICE_LIMIT = 5
 PREMIUM_ENABLED = True
 
 # Admin Telegram IDs (add yours later)
-ADMIN_IDS = []
+ADMIN_IDS = [8230920402]
 
 # Timezone
 DEFAULT_TIMEZONE = "Asia/Karachi"
