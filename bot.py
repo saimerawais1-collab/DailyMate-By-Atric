@@ -2,6 +2,7 @@
 
 
 
+
 import logging
 
 from telegram import Update
@@ -50,6 +51,8 @@ from handlers.admin import (
     admin_help,
     stats_command,
     maintenance_command,
+    grant_premium_command,
+    revoke_premium_command,
 )
 from handlers.misc import (
     feedback_command,
@@ -167,8 +170,7 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Global maintenance protection.
-    # This runs before commands and callback handlers.
+    # Global maintenance protection
     app.add_handler(
         TypeHandler(Update, maintenance_guard),
         group=-1,
@@ -184,10 +186,13 @@ def main():
     app.add_handler(CommandHandler("feedback", feedback_command))
     app.add_handler(CommandHandler("sponsor", sponsor_command))
 
+    # Admin commands
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("adminhelp", admin_help))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("maintenance", maintenance_command))
+    app.add_handler(CommandHandler("grantpremium", grant_premium_command))
+    app.add_handler(CommandHandler("revokepremium", revoke_premium_command))
 
     # Main menu callbacks
     app.add_handler(CallbackQueryHandler(ai_callback, pattern=r"^ai$"))
@@ -227,7 +232,7 @@ def main():
         )
     )
 
-    # Premium
+    # Premium callbacks
     app.add_handler(
         CallbackQueryHandler(
             premium_features_callback,
