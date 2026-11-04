@@ -1,7 +1,6 @@
 
 
 import logging
-import os
 
 from telegram import Update
 from telegram.ext import (
@@ -18,20 +17,29 @@ from database import init_db
 
 from handlers.start import start_command
 from handlers.ai import ai_callback, ai_message
-from handlers.text_tools import text_callback, text_action_callback, text_message
-from handlers.voice import voice_callback, voice_action_callback, voice_message
+from handlers.text_tools import (
+    text_callback,
+    text_action_callback,
+    text_message,
+)
+from handlers.voice import (
+    voice_callback,
+    voice_action_callback,
+    voice_message,
+)
 from handlers.utilities import (
     utilities_callback,
     utility_action_callback,
     utility_message,
 )
 from handlers.premium import (
+    premium_menu,
     premium_callback,
     premium_features_callback,
     premium_plans_callback,
     premium_usage_callback,
 )
-from handlers.help import help_command, menu_command
+from handlers.help import HELP_TEXT, help_command, menu_command
 from handlers.referrals import referral_command
 from handlers.admin import (
     admin_command,
@@ -54,10 +62,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def cancel_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def cancel_command(update, context):
     context.user_data.clear()
 
     await update.message.reply_text(
@@ -66,36 +71,43 @@ async def cancel_command(
     )
 
 
-async def message_router(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def premium_command(update, context):
+    await update.message.reply_text(
+        "⭐ Daily-Mate Premium\n\n"
+        "Unlock higher limits and advanced services.\n\n"
+        "Choose an option:",
+        reply_markup=premium_menu(),
+    )
+
+
+async def help_button_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(HELP_TEXT)
+
+
+async def message_router(update, context):
     if not update.message:
         return
 
-    # Feedback mode
     if context.user_data.get("awaiting_feedback"):
         await feedback_message(update, context)
         return
 
     mode = context.user_data.get("mode")
 
-    # AI Assistant
     if mode == "ai" and update.message.text:
         await ai_message(update, context)
         return
 
-    # Text Tools
     if mode == "text" and update.message.text:
         await text_message(update, context)
         return
 
-    # Voice Tools
     if mode == "voice":
         await voice_message(update, context)
         return
 
-    # Daily Utilities
     if context.user_data.get("utility_action"):
         await utility_message(update, context)
         return
@@ -105,10 +117,7 @@ async def message_router(
     )
 
 
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def error_handler(update, context):
     logger.error("Bot error: %s", context.error)
 
 
@@ -128,7 +137,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("referral", referral_command))
-    app.add_handler(CommandHandler("premium", premium_callback))
+    app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CommandHandler("feedback", feedback_command))
     app.add_handler(CommandHandler("sponsor", sponsor_command))
 
@@ -137,7 +146,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("maintenance", maintenance_command))
 
-    # Main menu callback buttons
+    # Main menu callbacks
     app.add_handler(CallbackQueryHandler(ai_callback, pattern=r"^ai$"))
     app.add_handler(CallbackQueryHandler(text_callback, pattern=r"^text$"))
     app.add_handler(CallbackQueryHandler(voice_callback, pattern=r"^voice$"))
@@ -147,43 +156,67 @@ def main():
     app.add_handler(
         CallbackQueryHandler(premium_callback, pattern=r"^premium$")
     )
-    app.add_handler(CallbackQueryHandler(help_command, pattern=r"^help$"))
-
-    # Text tool callbacks
     app.add_handler(
-        CallbackQueryHandler(text_action_callback, pattern=r"^text_[a-z]+$")
+        CallbackQueryHandler(help_button_callback, pattern=r"^help$")
     )
 
-    # Voice tool callbacks
+    # Text tools
     app.add_handler(
-        CallbackQueryHandler(voice_action_callback, pattern=r"^voice_(transcribe|tts|summary)$")
+        CallbackQueryHandler(
+            text_action_callback,
+            pattern=r"^text_[a-z]+$",
+        )
     )
 
-    # Utility callbacks
+    # Voice tools
     app.add_handler(
-        CallbackQueryHandler(utility_action_callback, pattern=r"^util_(calc|date|unit|currency|qr)$")
+        CallbackQueryHandler(
+            voice_action_callback,
+            pattern=r"^voice_(transcribe|tts|summary)$",
+        )
     )
 
-    # Premium callbacks
+    # Utilities
     app.add_handler(
-        CallbackQueryHandler(premium_features_callback, pattern=r"^premium_features$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(premium_plans_callback, pattern=r"^premium_plans$")
-    )
-    app.add_handler(
-        CallbackQueryHandler(premium_usage_callback, pattern=r"^premium_usage$")
+        CallbackQueryHandler(
+            utility_action_callback,
+            pattern=r"^util_(calc|date|unit|currency|qr)$",
+        )
     )
 
-    # Misc callback
+    # Premium
     app.add_handler(
-        CallbackQueryHandler(sponsor_info_callback, pattern=r"^sponsor_info$")
+        CallbackQueryHandler(
+            premium_features_callback,
+            pattern=r"^premium_features$",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            premium_plans_callback,
+            pattern=r"^premium_plans$",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            premium_usage_callback,
+            pattern=r"^premium_usage$",
+        )
     )
 
-    # Messages
+    # Sponsor
+    app.add_handler(
+        CallbackQueryHandler(
+            sponsor_info_callback,
+            pattern=r"^sponsor_info$",
+        )
+    )
+
+    # Incoming messages
     app.add_handler(
         MessageHandler(
-            (filters.TEXT | filters.VOICE | filters.AUDIO) & ~filters.COMMAND,
+            (filters.TEXT | filters.VOICE | filters.AUDIO)
+            & ~filters.COMMAND,
             message_router,
         )
     )
