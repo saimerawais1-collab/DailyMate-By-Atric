@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 
 from database import register_user
 from config import BOT_NAME, BOT_TAGLINE
+from handlers.referrals import register_referral
 
 
 def main_menu():
@@ -40,6 +41,20 @@ async def start_command(
         username=user.username,
         first_name=user.first_name,
     )
+
+    # Process referral start parameter
+    if context.args:
+        referral_arg = context.args[0]
+
+        if referral_arg.startswith("ref_"):
+            try:
+                referrer_id = int(referral_arg.replace("ref_", "", 1))
+                register_referral(
+                    new_user_id=user.id,
+                    referrer_id=referrer_id,
+                )
+            except ValueError:
+                pass
 
     message = (
         f"Welcome to {BOT_NAME}, {user.first_name}!\n\n"
