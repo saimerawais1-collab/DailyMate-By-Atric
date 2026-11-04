@@ -1,103 +1,191 @@
 
-from telegram import Update
+
+import ast
+import operator
+from datetime import date, timedelta
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from services.groq_service import ask_ai
-from database import get_usage, increment_usage, is_premium
-from config import FREE_DAILY_TEXT_LIMIT
+
+def utilities_menu():
+    keyboard = [
+        [
+            InlineKeyboardButton("🧮 Calculator", callback_data="util_calc"),
+            InlineKeyboardButton("📅 Date Tool", callback_data="util_date"),
+        ],
+        [
+            InlineKeyboardButton("📏 Unit Converter", callback_data="util_unit"),
+            InlineKeyboardButton("💱 Currency", callback_data="util_currency"),
+        ],
+        [
+            InlineKeyboardButton("🔳 QR Generator", callback_data="util_qr"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
-TEXT_ACTIONS = {
-    "grammar": "Correct grammar and spelling while preserving meaning.",
-    "summarize": "Summarize the following text clearly.",
-    "translate": "Translate the following text. Detect its language and ask for target language if needed.",
-    "email": "Turn the following request into a professional email.",
-    "caption": "Create engaging social media captions for this content.",
-    "hashtags": "Generate relevant and useful hashtags for this content.",
-    "rewrite": "Rewrite this text to make it clearer and more polished.",
+async def utilities_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+    await query.answer()
+
+    await query.message.reply_text(
+        "🧰 Daily Utilities\n\nSelect a tool:",
+        reply_markup=utilities_menu(),
+    )
+
+
+async def utility_action_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+    await query.answer()
+
+    action = query.data.replace("util_", "", 1)
+
+    if action not in {"calc", "date", "unit", "currency", "qr"}:
+        await query.message.reply_text("Unknown utility.")
+        return
+
+    context.user_data["utility_action"] = action
+
+    instructions = {
+        "calc": "Send a math expression, for example: 25 * (8 + 2)",
+        "date": "Send a date as YYYY-MM-DD, for example: 2026-12-25",
+        "unit": (
+            "Send a conversion like:\n"
+            "10 km to miles\n"
+            "5 kg to lb\n"
+            "100 cm to m"
+        ),
+        "currency": (
+            "Currency conversion is not connected yet.\n"
+            "Live exchange rates will be added later."
+        ),
+        "qr": (
+            "QR generation is not connected yet.\n"
+            "It will be added in a later integration step."
+        ),
+    }
+
+    await query.message.reply_text(instructions[action])
+
+
+_ALLOWED_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
 }
 
 
-async def text_callback(
+def safe_calculate(expression: str):
+    def evaluate(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+
+        if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_OPERATORS:
+            left = evaluate(node.left)
+            right = evaluate(node.right)
+
+            if isinstance(node.op, ast.Pow) and abs(right) > 100:
+                raise ValueError("Exponent too large.")
+
+            return _ALLOWED_OPERATORS[type(node.op)](left, right)
+
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_OPERATORS:
+            return _ALLOWED_OPERATORS[type(node.op)](evaluate(node.operand))
+
+        raise ValueError("Invalid expression.")
+
+    tree = ast.parse(expression, mode="eval")
+    return evaluate(tree.body)
+
+
+def convert_unit(text: str):
+    parts = text.lower().replace(" to ", " ").split()
+
+    if len(parts) != 3:
+        raise ValueError("Format: 10 km to miles")
+
+    value = float(parts[0])
+    source = parts[1]
+    target = parts[2]
+
+    conversions = {
+        ("km", "miles"): value * 0.621371,
+        ("miles", "km"): value / 0.621371,
+        ("kg", "lb"): value * 2.20462,
+        ("lb", "kg"): value / 2.20462,
+        ("cm", "m"): value / 100,
+        ("m", "cm"): value * 100,
+        ("c", "f"): (value * 9 / 5) + 32,
+        ("f", "c"): (value - 32) * 5 / 9,
+    }
+
+    result = conversions.get((source, target))
+
+    if result is None:
+        raise ValueError("Unsupported conversion.")
+
+    return result
+
+
+async def utility_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    query = update.callback_query
-    await query.answer()
-
-    keyboard = [
-        [{"text": "📝 Grammar", "callback_data": "text_grammar"},
-         {"text": "📄 Summarize", "callback_data": "text_summarize"}],
-        [{"text": "🌐 Translate", "callback_data": "text_translate"},
-         {"text": "📧 Email", "callback_data": "text_email"}],
-        [{"text": "📱 Caption", "callback_data": "text_caption"},
-         {"text": "#️⃣ Hashtags", "callback_data": "text_hashtags"}],
-        [{"text": "✍️ Rewrite", "callback_data": "text_rewrite"}],
-    ]
-
-    from telegram import InlineKeyboardMarkup
-    markup = InlineKeyboardMarkup(keyboard)
-
-    await query.message.reply_text(
-        "✍️ Choose a Text Tool:",
-        reply_markup=markup,
-    )
-
-
-async def text_action_callback(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    query = update.callback_query
-    await query.answer()
-
-    action = query.data.replace("text_", "", 1)
-
-    if action not in TEXT_ACTIONS:
-        await query.message.reply_text("Unknown text tool.")
+    if not update.message or not update.message.text:
         return
 
-    context.user_data["mode"] = "text"
-    context.user_data["text_action"] = action
+    action = context.user_data.get("utility_action")
 
-    await query.message.reply_text(
-        f"Selected: {action.title()}\n\n"
-        "Now send the text you want me to process."
-    )
-
-
-async def text_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    user_id = update.effective_user.id
-    text = update.message.text
-
-    action = context.user_data.get("text_action")
-
-    if not action or action not in TEXT_ACTIONS:
+    if not action:
         return
 
-    premium = is_premium(user_id)
-    usage = get_usage(user_id)
-    text_count = usage[1] if usage else 0
+    text = update.message.text.strip()
 
-    if not premium and text_count >= FREE_DAILY_TEXT_LIMIT:
+    try:
+        if action == "calc":
+            result = safe_calculate(text)
+            response = f"🧮 Result: {result}"
+
+        elif action == "date":
+            target = date.fromisoformat(text)
+            difference = (target - date.today()).days
+            response = (
+                f"📅 Date: {target.isoformat()}\n"
+                f"Days from today: {difference}"
+            )
+
+        elif action == "unit":
+            result = convert_unit(text)
+            response = f"📏 Converted value: {result:.4f}"
+
+        elif action == "currency":
+            response = "💱 Live currency conversion is not available yet."
+
+        elif action == "qr":
+            response = "🔳 QR generation will be connected later."
+
+        else:
+            response = "Unknown utility."
+
+        await update.message.reply_text(response)
+
+    except Exception:
         await update.message.reply_text(
-            "⚠️ Daily Text Tools limit reached. "
-            "Upgrade to Premium for higher limits."
+            "❌ Could not process that input.\n"
+            "Please check the format and try again."
         )
-        return
 
-    prompt = f"{TEXT_ACTIONS[action]}\n\n{text}"
-
-    await update.message.reply_text("✍️ Processing...")
-
-    result = await ask_ai(prompt)
-
-    increment_usage(user_id, "text")
-
-    await update.message.reply_text(result)
-
-    context.user_data.pop("text_action", None)
-    context.user_data["mode"] = None
+    context.user_data.pop("utility_action", None)
