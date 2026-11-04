@@ -1,7 +1,14 @@
 
+
 import sqlite3
-from datetime import date
-from config import DATABASE_PATH
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from config import DATABASE_PATH, DEFAULT_TIMEZONE
+
+
+def get_today():
+    return datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).date().isoformat()
 
 
 def get_connection():
@@ -50,7 +57,7 @@ def register_user(user_id, username=None, first_name=None):
             INSERT OR IGNORE INTO users
             (user_id, username, first_name, joined_at)
             VALUES (?, ?, ?, ?)
-        """, (user_id, username, first_name, date.today().isoformat()))
+        """, (user_id, username, first_name, get_today()))
 
         conn.execute("""
             UPDATE users
@@ -76,11 +83,23 @@ def is_premium(user_id):
     if not user:
         return False
 
-    return bool(user[4])
+    is_premium_flag = bool(user[4])
+    premium_until = user[5]
+
+    # No expiry date means the premium flag is permanent.
+    if not premium_until:
+        return is_premium_flag
+
+    try:
+        expiry_date = date.fromisoformat(premium_until[:10])
+        today = date.fromisoformat(get_today())
+        return is_premium_flag and expiry_date >= today
+    except (ValueError, TypeError):
+        return False
 
 
 def get_usage(user_id):
-    today = date.today().isoformat()
+    today = get_today()
 
     with get_connection() as conn:
         conn.execute("""
@@ -99,7 +118,7 @@ def get_usage(user_id):
 
 
 def increment_usage(user_id, usage_type):
-    today = date.today().isoformat()
+    today = get_today()
 
     allowed_columns = {
         "ai": "ai_count",
