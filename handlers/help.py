@@ -1,4 +1,5 @@
 
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -19,11 +20,12 @@ Ask questions, write content, brainstorm, and get help.
 • Social captions
 • Hashtags
 • Text rewriting
+• Word Counter
 
 🎙 Voice Tools
 • Voice-to-text
-• Text-to-speech
 • Voice summaries
+• Text-to-speech (Coming Soon)
 
 🧰 Daily Utilities
 • Calculator
@@ -31,10 +33,9 @@ Ask questions, write content, brainstorm, and get help.
 • Unit converter
 • Date calculator
 • QR generator
-• More tools coming soon
 
 ⭐ Premium
-Higher limits and advanced features.
+Higher usage limits and advanced features.
 
 🎁 Referrals
 Invite friends using your personal referral link.
@@ -45,6 +46,7 @@ Commands:
 /help - Show this help
 /referral - Get your invite link
 /premium - Premium options
+/cancel - Cancel your current task
 """
 
 
@@ -52,7 +54,8 @@ async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    await update.message.reply_text(HELP_TEXT)
+    if update.effective_message:
+        await update.effective_message.reply_text(HELP_TEXT)
 
 
 async def menu_command(
@@ -61,7 +64,8 @@ async def menu_command(
 ):
     from handlers.start import main_menu
 
-    await update.message.reply_text(
-        "🏠 Daily-Mate Main Menu",
-        reply_markup=main_menu(),
-    )
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "🏠 Daily-Mate Main Menu",
+            reply_markup=main_menu(),
+        )
