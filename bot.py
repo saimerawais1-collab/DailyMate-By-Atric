@@ -1,4 +1,5 @@
 
+
 import logging
 
 from telegram import Update
@@ -121,6 +122,12 @@ async def help_button_callback(update, context):
     await query.message.reply_text(HELP_TEXT)
 
 
+async def referral_button_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    await referral_command(update, context)
+
+
 async def message_router(update, context):
     if not update.message:
         return
@@ -153,7 +160,11 @@ async def message_router(update, context):
 
 
 async def error_handler(update, context):
-    logger.error("Bot error: %s", context.error)
+    logger.error(
+        "Bot error while processing update: %s",
+        context.error,
+        exc_info=context.error,
+    )
 
 
 def main():
@@ -202,6 +213,12 @@ def main():
     )
     app.add_handler(
         CallbackQueryHandler(help_button_callback, pattern=r"^help$")
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            referral_button_callback,
+            pattern=r"^referral_menu$",
+        )
     )
 
     # Text tools
