@@ -1,9 +1,6 @@
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from database import register_user
@@ -25,6 +22,9 @@ def main_menu():
             InlineKeyboardButton("⭐ Premium", callback_data="premium"),
             InlineKeyboardButton("ℹ️ Help", callback_data="help"),
         ],
+        [
+            InlineKeyboardButton("🎁 Referrals", callback_data="referral_menu"),
+        ],
     ]
 
     return InlineKeyboardMarkup(keyboard)
@@ -42,17 +42,20 @@ async def start_command(
         first_name=user.first_name,
     )
 
-    # Process referral start parameter
     if context.args:
         referral_arg = context.args[0]
 
         if referral_arg.startswith("ref_"):
             try:
-                referrer_id = int(referral_arg.replace("ref_", "", 1))
+                referrer_id = int(
+                    referral_arg.replace("ref_", "", 1)
+                )
+
                 register_referral(
                     new_user_id=user.id,
                     referrer_id=referrer_id,
                 )
+
             except ValueError:
                 pass
 
