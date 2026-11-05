@@ -1,11 +1,13 @@
 
 
-
 import ast
+import math
 import operator
+import re
 from datetime import date
 from io import BytesIO
 
+import httpx
 import qrcode
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -62,8 +64,13 @@ async def utility_action_callback(update: Update, context: ContextTypes.DEFAULT_
             "100 cm to m"
         ),
         "currency": (
-            "Currency conversion is not connected yet.\n"
-            "Live exchange rates will be added later."
+            "💱 Currency Converter\n\n"
+            "Send an amount and two currency codes:\n\n"
+            "100 USD to PKR\n"
+            "50 EUR to USD\n"
+            "1000 PKR to SAR\n\n"
+            "Rates are reference rates and may not reflect "
+            "the exact rate offered by your bank or exchange."
         ),
         "qr": (
             "🔳 Send the text, link, or information "
@@ -101,8 +108,9 @@ def safe_calculate(expression: str):
 
             result = _ALLOWED_OPERATORS[type(node.op)](left, right)
 
-            if isinstance(result, (int, float)) and abs(result) > 1e100:
-                raise ValueError("Result too large.")
+            if isinstance(result, (int, float)):
+                if not math.isfinite(result) or abs(result) > 1e100:
+                    raise ValueError("Result too large.")
 
             return result
 
@@ -125,6 +133,10 @@ def convert_unit(text: str):
         raise ValueError("Format: 10 km to miles")
 
     value = float(parts[0])
+
+    if not math.isfinite(value):
+        raise ValueError("Invalid number.")
+
     source = parts[1]
     target = parts[2]
 
@@ -145,6 +157,55 @@ def convert_unit(text: str):
         raise ValueError("Unsupported conversion.")
 
     return result
+
+
+async def convert_currency(text: str):
+    match = re.fullmatch(
+        r"\s*(\d+(?:\.\d+)?)\s+([A-Za-z]{3})\s+to\s+([A-Za-z]{3})\s*",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        raise ValueError("Format: 100 USD to PKR")
+
+    amount = float(match.group(1))
+    base = match.group(2).upper()
+    quote = match.group(3).upper()
+
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError("Enter a valid positive amount.")
+
+    if base == quote:
+        return (
+            f"💱 Currency Conversion\n\n"
+            f"{amount:,.2f} {base} = {amount:,.2f} {quote}\n"
+            f"Exchange rate: 1 {base} = 1 {quote}\n"
+            f"Rate date: Same currency"
+        )
+
+    url = f"https://api.frankfurter.dev/v2/rate/{base}/{quote}"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+    rate = float(data["rate"])
+    rate_date = data["date"]
+    converted = amount * rate
+
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError("Invalid exchange rate.")
+
+    return (
+        f"💱 Currency Conversion\n\n"
+        f"{amount:,.2f} {base} = {converted:,.2f} {quote}\n\n"
+        f"Exchange rate: 1 {base} = {rate:,.6f} {quote}\n"
+        f"Rate date: {rate_date}\n\n"
+        "Source: Frankfurter reference exchange rates.\n"
+        "Actual bank or exchange rates may differ."
+    )
 
 
 def create_qr_code(content: str):
@@ -185,19 +246,17 @@ async def utility_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if action == "calc":
             result = safe_calculate(user_input)
-            response = f"🧮 Result: {result}"
-            await update.message.reply_text(response)
+            await update.message.reply_text(f"🧮 Result: {result}")
 
         elif action == "date":
             target = date.fromisoformat(user_input)
             today = date.fromisoformat(get_today())
             difference = (target - today).days
 
-            response = (
+            await update.message.reply_text(
                 f"📅 Date: {target.isoformat()}\n"
                 f"Days from today: {difference}"
             )
-            await update.message.reply_text(response)
 
         elif action == "unit":
             result = convert_unit(user_input)
@@ -220,17 +279,33 @@ async def utility_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif action == "currency":
-            await update.message.reply_text(
-                "💱 Live currency conversion is not available yet."
-            )
+            result = await convert_currency(user_input)
+            await update.message.reply_text(result)
 
         else:
             await update.message.reply_text("Unknown utility.")
 
-    except Exception:
+    except httpx.HTTPStatusError:
+        await update.message.reply_text(
+            "❌ Currency pair not found or rate unavailable.\n"
+            "Check the currency codes and try again."
+        )
+
+    except httpx.RequestError:
+        await update.message.reply_text(
+            "❌ Could not connect to the exchange-rate service.\n"
+            "Please try again later."
+        )
+
+    except (ValueError, SyntaxError, ZeroDivisionError, OverflowError):
         await update.message.reply_text(
             "❌ Could not process that input.\n"
             "Please check the format and try again."
+        )
+
+    except Exception:
+        await update.message.reply_text(
+            "❌ Something went wrong while processing your request."
         )
 
     context.user_data.pop("utility_action", None)
