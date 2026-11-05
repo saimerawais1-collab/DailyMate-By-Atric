@@ -1,9 +1,6 @@
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from services.groq_service import ask_ai, AIServiceError
@@ -20,6 +17,23 @@ TEXT_ACTIONS = {
     "hashtags": "Generate relevant and useful hashtags for this content.",
     "rewrite": "Rewrite this text to make it clearer and more polished.",
 }
+
+
+def clear_text_state(context):
+    context.user_data.pop("text_action", None)
+    context.user_data.pop("translate_source", None)
+    context.user_data.pop("awaiting_translate_language", None)
+    context.user_data["mode"] = None
+
+
+def text_limit_reached(user_id):
+    if is_premium(user_id):
+        return False
+
+    usage = get_usage(user_id)
+    text_count = usage[1] if usage else 0
+
+    return text_count >= FREE_DAILY_TEXT_LIMIT
 
 
 async def text_callback(
@@ -67,26 +81,30 @@ async def text_action_callback(
         await query.message.reply_text("Unknown text tool.")
         return
 
+    clear_text_state(context)
+
     context.user_data["mode"] = "text"
     context.user_data["text_action"] = action
-    context.user_data.pop("translate_source", None)
-    context.user_data.pop("awaiting_translate_language", None)
 
     if action == "translate":
         message = (
-            "🌐 Translation selected.\n\n"
-            "First send the text you want translated.\n"
-            "Then I will ask for the target language."
+            "🌐 Translate selected.\n\n"
+            "Send the text you want translated first.\n"
+            "Then I will ask you for the target language.\n\n"
+            "To cancel, send /cancel."
         )
+
     elif action == "wordcount":
         message = (
             "🔢 Word Counter selected.\n\n"
-            "Send the text you want counted."
+            "Send the text you want counted.\n\n"
+            "To cancel, send /cancel."
         )
+
     else:
         message = (
             f"Selected: {action.title()}\n\n"
-            "Now send the text you want me to process.\n\n"
+            "Send the text you want me to process.\n\n"
             "To cancel, send /cancel."
         )
 
@@ -107,72 +125,63 @@ async def text_message(
         await update.message.reply_text("Please send some text.")
         return
 
-    # Step 2 of translation: receive target language.
-    if context.user_data.get("awaiting_translate_language"):
-        source_text = context.user_data.get("translate_source", "")
-        language = text
-
-        context.user_data.pop("awaiting_translate_language", None)
-        context.user_data.pop("translate_source", None)
-
-        await process_text(
-            update,
-            context,
-            user_id,
-            f"Translate the following text into {language}. "
-            "Return only the translation, without explanations.\n\n"
-            f"{source_text}",
-        )
-        return
-
     action = context.user_data.get("text_action")
 
     if not action:
         return
 
-    # Word counter works locally; no AI/API needed.
+    # Translation: receive target language.
+    if context.user_data.get("awaiting_translate_language"):
+        source_text = context.user_data.get("translate_source")
+
+        if not source_text:
+            clear_text_state(context)
+            await update.message.reply_text(
+                "Translation session expired. Please select Translate again."
+            )
+            return
+
+        language = text
+
+        prompt = (
+            f"Translate the following text into {language}.\n"
+            "Return only the translation. Do not add explanations.\n\n"
+            f"{source_text}"
+        )
+
+        await process_text(update, context, user_id, prompt)
+        return
+
+    # Word counter does not need AI.
     if action == "wordcount":
         words = text.split()
-        characters = len(text)
-        characters_no_spaces = len("".join(text.split()))
-        lines = len(text.splitlines())
+        lines = text.splitlines()
 
         await update.message.reply_text(
             "🔢 Text Statistics\n\n"
             f"Words: {len(words)}\n"
-            f"Characters (with spaces): {characters}\n"
-            f"Characters (without spaces): {characters_no_spaces}\n"
-            f"Lines: {lines}"
+            f"Characters (with spaces): {len(text)}\n"
+            f"Characters (without spaces): {len(text.replace(' ', ''))}\n"
+            f"Lines: {len(lines)}"
         )
 
-        context.user_data.pop("text_action", None)
-        context.user_data["mode"] = None
+        clear_text_state(context)
         return
 
     if action not in TEXT_ACTIONS:
+        clear_text_state(context)
         await update.message.reply_text("Unknown text tool.")
         return
 
-    # Step 1 of translation: save text and ask target language.
+    # Translation: receive original text first.
     if action == "translate":
         context.user_data["translate_source"] = text
         context.user_data["awaiting_translate_language"] = True
 
         await update.message.reply_text(
             "🌐 Which language should I translate it into?\n\n"
-            "Example: Urdu, English, Arabic, French\n\n"
-            "Send the language name now."
-        )
-        return
-
-    premium = is_premium(user_id)
-    usage = get_usage(user_id)
-    text_count = usage[1] if usage else 0
-
-    if not premium and text_count >= FREE_DAILY_TEXT_LIMIT:
-        await update.message.reply_text(
-            "⚠️ Daily Text Tools limit reached.\n"
-            "Upgrade to Premium for higher limits."
+            "Examples: Urdu, English, Arabic, French\n\n"
+            "Send the target language now."
         )
         return
 
@@ -187,45 +196,41 @@ async def process_text(
     user_id: int,
     prompt: str,
 ):
-    premium = is_premium(user_id)
-    usage = get_usage(user_id)
-    text_count = usage[1] if usage else 0
-
-    if not premium and text_count >= FREE_DAILY_TEXT_LIMIT:
+    if text_limit_reached(user_id):
         await update.message.reply_text(
             "⚠️ Daily Text Tools limit reached.\n"
             "Upgrade to Premium for higher limits."
         )
-        context.user_data.pop("text_action", None)
-        context.user_data["mode"] = None
+        clear_text_state(context)
         return
 
-    status_message = await update.message.reply_text(
-        "✍️ Processing..."
-    )
+    status_message = await update.message.reply_text("✍️ Processing...")
 
     try:
         result = await ask_ai(prompt)
 
+        if not isinstance(result, str) or not result.strip():
+            raise AIServiceError("AI returned an empty response.")
+
     except AIServiceError as error:
         await status_message.edit_text(
             f"⚠️ {error}\n\n"
-            "Your daily Text Tools limit has not been used."
+            "Your usage has not been charged.\n"
+            "Please try sending your text again."
         )
+        # Keep selected tool active so user can retry.
         return
 
     except Exception:
         await status_message.edit_text(
             "⚠️ Something went wrong. Please try again later.\n\n"
-            "Your daily Text Tools limit has not been used."
+            "Your usage has not been charged."
         )
+        # Keep selected tool active so user can retry.
         return
 
     increment_usage(user_id, "text")
 
     await status_message.edit_text(result)
 
-    context.user_data.pop("text_action", None)
-    context.user_data.pop("translate_source", None)
-    context.user_data.pop("awaiting_translate_language", None)
-    context.user_data["mode"] = None
+    clear_text_state(context)
