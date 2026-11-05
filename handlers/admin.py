@@ -1,5 +1,7 @@
 
 
+
+import logging
 import sqlite3
 from datetime import date, timedelta
 
@@ -8,10 +10,10 @@ from telegram.ext import ContextTypes
 
 from config import ADMIN_IDS, DATABASE_PATH
 from database import get_today
-from services.maintenance_service import (
-    is_maintenance_enabled,
-    set_maintenance,
-)
+from services.maintenance_service import set_maintenance
+
+
+logger = logging.getLogger(__name__)
 
 
 def is_admin(user_id):
@@ -48,8 +50,9 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/maintenance off - Disable maintenance\n"
         "/grantpremium USER_ID DAYS - Grant premium\n"
         "/revokepremium USER_ID - Revoke premium\n\n"
-        "Example:\n"
-        "/grantpremium 123456789 30"
+        "Examples:\n"
+        "/grantpremium 123456789 30\n"
+        "/revokepremium 123456789"
     )
 
 
@@ -60,40 +63,57 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     today = get_today()
 
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        total_users = conn.execute(
-            "SELECT COUNT(*) FROM users"
-        ).fetchone()[0]
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            total_users = conn.execute(
+                "SELECT COUNT(*) FROM users"
+            ).fetchone()[0]
 
-        premium_users = conn.execute(
-            "SELECT COUNT(*) FROM users WHERE is_premium = 1"
-        ).fetchone()[0]
+            premium_users = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM users
+                WHERE is_premium = 1
+                AND (
+                    premium_until IS NULL
+                    OR premium_until = ''
+                    OR substr(premium_until, 1, 10) >= ?
+                )
+                """,
+                (today,),
+            ).fetchone()[0]
 
-        usage = conn.execute(
-            """
-            SELECT
-                COALESCE(SUM(ai_count), 0),
-                COALESCE(SUM(text_count), 0),
-                COALESCE(SUM(voice_count), 0)
-            FROM usage
-            WHERE usage_date = ?
-            """,
-            (today,),
-        ).fetchone()
+            usage = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(ai_count), 0),
+                    COALESCE(SUM(text_count), 0),
+                    COALESCE(SUM(voice_count), 0)
+                FROM usage
+                WHERE usage_date = ?
+                """,
+                (today,),
+            ).fetchone()
 
-    await update.message.reply_text(
-        "📊 DAILY-MATE BOT STATS\n\n"
-        f"👥 Total users: {total_users}\n"
-        f"⭐ Premium users: {premium_users}\n\n"
-        f"🤖 AI requests today: {usage[0]}\n"
-        f"📝 Text requests today: {usage[1]}\n"
-        f"🎙 Voice requests today: {usage[2]}"
-    )
+        await update.message.reply_text(
+            "📊 DAILY-MATE BOT STATS\n\n"
+            f"👥 Total users: {total_users}\n"
+            f"⭐ Active premium users: {premium_users}\n\n"
+            f"🤖 AI requests today: {usage[0]}\n"
+            f"📝 Text requests today: {usage[1]}\n"
+            f"🎙 Voice requests today: {usage[2]}"
+        )
+
+    except sqlite3.Error:
+        logger.exception("Could not retrieve bot statistics.")
+        await update.message.reply_text(
+            "⚠️ Could not retrieve statistics. Check the database."
+        )
 
 
 async def maintenance_command(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin access only.")
@@ -106,9 +126,18 @@ async def maintenance_command(
         return
 
     enabled = context.args[0].lower() == "on"
-    set_maintenance(context.bot_data, enabled)
+
+    try:
+        set_maintenance(context.bot_data, enabled)
+    except Exception:
+        logger.exception("Could not change maintenance mode.")
+        await update.message.reply_text(
+            "⚠️ Could not change maintenance mode."
+        )
+        return
 
     status = "ENABLED 🔴" if enabled else "DISABLED 🟢"
+
     await update.message.reply_text(
         f"Maintenance mode {status}"
     )
@@ -116,7 +145,7 @@ async def maintenance_command(
 
 async def grant_premium_command(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin access only.")
@@ -132,8 +161,10 @@ async def grant_premium_command(
     try:
         target_id = int(context.args[0])
         days = int(context.args[1])
+
         if target_id <= 0 or not 1 <= days <= 3650:
             raise ValueError
+
     except ValueError:
         await update.message.reply_text(
             "Invalid user ID or days. Days must be between 1 and 3650."
@@ -142,56 +173,66 @@ async def grant_premium_command(
 
     today = date.fromisoformat(get_today())
 
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute(
-            """
-            SELECT is_premium, premium_until
-            FROM users
-            WHERE user_id = ?
-            """,
-            (target_id,),
-        ).fetchone()
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            user = conn.execute(
+                """
+                SELECT is_premium, premium_until
+                FROM users
+                WHERE user_id = ?
+                """,
+                (target_id,),
+            ).fetchone()
 
-        if not user:
-            await update.message.reply_text(
-                "User not found. They must start the bot first."
-            )
-            return
+            if not user:
+                await update.message.reply_text(
+                    "User not found. They must start the bot first."
+                )
+                return
 
-        is_premium_flag, premium_until = user
+            is_premium_flag, premium_until = user
 
-        if is_premium_flag and premium_until:
-            try:
-                current_expiry = date.fromisoformat(premium_until[:10])
-            except ValueError:
+            if is_premium_flag and premium_until:
+                try:
+                    current_expiry = date.fromisoformat(
+                        premium_until[:10]
+                    )
+                except (ValueError, TypeError):
+                    current_expiry = today
+            else:
                 current_expiry = today
-        else:
-            current_expiry = today
 
-        base_date = max(today, current_expiry)
-        new_expiry = base_date + timedelta(days=days)
+            base_date = max(today, current_expiry)
+            new_expiry = base_date + timedelta(days=days)
 
-        conn.execute(
-            """
-            UPDATE users
-            SET is_premium = 1, premium_until = ?
-            WHERE user_id = ?
-            """,
-            (new_expiry.isoformat(), target_id),
+            conn.execute(
+                """
+                UPDATE users
+                SET is_premium = 1, premium_until = ?
+                WHERE user_id = ?
+                """,
+                (new_expiry.isoformat(), target_id),
+            )
+
+            conn.commit()
+
+        await update.message.reply_text(
+            "✅ Premium granted successfully!\n\n"
+            f"👤 User ID: {target_id}\n"
+            f"⏳ Added days: {days}\n"
+            f"📅 Premium expiry: {new_expiry.isoformat()}"
         )
-        conn.commit()
 
-    await update.message.reply_text(
-        "✅ Premium granted successfully!\n\n"
-        f"👤 User ID: {target_id}\n"
-        f"⏳ Added days: {days}\n"
-        f"📅 Premium expiry: {new_expiry.isoformat()}"
-    )
+    except sqlite3.Error:
+        logger.exception("Could not grant premium.")
+        await update.message.reply_text(
+            "⚠️ Database error. Premium could not be granted."
+        )
 
 
 async def revoke_premium_command(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin access only.")
@@ -199,34 +240,57 @@ async def revoke_premium_command(
 
     if len(context.args) != 1:
         await update.message.reply_text(
-            "Usage:\n/revokepremium USER_ID"
+            "Usage:\n/revokepremium USER_ID\n\n"
+            "Example:\n/revokepremium 123456789"
         )
         return
 
     try:
         target_id = int(context.args[0])
+
         if target_id <= 0:
             raise ValueError
+
     except ValueError:
-        await update.message.reply_text("Invalid user ID.")
-        return
-
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        cursor = conn.execute(
-            """
-            UPDATE users
-            SET is_premium = 0, premium_until = NULL
-            WHERE user_id = ?
-            """,
-            (target_id,),
+        await update.message.reply_text(
+            "⚠️ Invalid user ID. Please enter a valid numeric ID."
         )
-        conn.commit()
-
-    if cursor.rowcount == 0:
-        await update.message.reply_text("User not found.")
         return
 
-    await update.message.reply_text(
-        "✅ Premium revoked successfully.\n"
-        f"👤 User ID: {target_id}"
-    )
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE users
+                SET is_premium = 0, premium_until = NULL
+                WHERE user_id = ?
+                """,
+                (target_id,),
+            )
+
+            updated_rows = cursor.rowcount
+            conn.commit()
+
+        if updated_rows == 0:
+            await update.message.reply_text(
+                "⚠️ User not found. No premium record was changed."
+            )
+            return
+
+        await update.message.reply_text(
+            "✅ PREMIUM REVOKED SUCCESSFULLY!\n\n"
+            f"👤 User ID: {target_id}\n"
+            "⭐ Premium status: Inactive"
+        )
+
+    except sqlite3.Error:
+        logger.exception("Database error while revoking premium.")
+        await update.message.reply_text(
+            "⚠️ Database error. Premium could not be revoked."
+        )
+
+    except Exception:
+        logger.exception("Unexpected error while revoking premium.")
+        await update.message.reply_text(
+            "⚠️ Unexpected error. Please check the bot logs."
+        )
