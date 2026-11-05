@@ -1,7 +1,6 @@
 
 import asyncio
 import logging
-from io import BytesIO
 
 from groq import Groq
 from telegram import (
@@ -181,6 +180,7 @@ async def voice_message(
 
     try:
         telegram_file = await context.bot.get_file(audio_file.file_id)
+
         audio_bytes = bytes(
             await telegram_file.download_as_bytearray()
         )
@@ -191,10 +191,11 @@ async def voice_message(
             )
             return
 
-        if message.voice:
-            filename = "voice_message.ogg"
-        else:
-            filename = audio_file.file_name or "audio_file.mp3"
+        filename = (
+            "voice_message.ogg"
+            if message.voice
+            else audio_file.file_name or "audio_file.mp3"
+        )
 
         transcription = await asyncio.to_thread(
             _transcribe_audio,
@@ -204,7 +205,7 @@ async def voice_message(
 
         if action == "transcribe":
             response = (
-                "🎙 **Voice Transcription**\n\n"
+                "🎙 Voice Transcription\n\n"
                 f"{transcription}"
             )
 
@@ -213,7 +214,7 @@ async def voice_message(
                 "📝 Audio transcribed. Generating summary..."
             )
 
-            response = await ask_ai(
+            summary = await ask_ai(
                 "Summarize the following audio transcription. "
                 "Preserve its important facts, decisions, and key points. "
                 "Use clear bullet points and respond in the same language "
@@ -221,18 +222,19 @@ async def voice_message(
                 f"TRANSCRIPTION:\n{transcription}"
             )
 
-            response = f"📝 **Voice Summary**\n\n{response}"
-
-        increment_usage(user.id, "voice")
+            response = (
+                "📝 Voice Summary\n\n"
+                f"{summary}"
+            )
 
         if len(response) > 4000:
             response = response[:3900] + "\n\n... (text shortened)"
 
         await status.delete()
-        await message.reply_text(
-            response,
-            parse_mode="Markdown",
-        )
+
+        await message.reply_text(response)
+
+        increment_usage(user.id, "voice")
 
     except ValueError:
         await status.edit_text(
