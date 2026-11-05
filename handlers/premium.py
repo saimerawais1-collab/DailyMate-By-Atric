@@ -1,4 +1,5 @@
 
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -7,6 +8,8 @@ from config import (
     FREE_DAILY_TEXT_LIMIT,
     FREE_DAILY_VOICE_LIMIT,
 )
+
+from database import get_usage, is_premium
 
 
 def premium_menu():
@@ -90,27 +93,39 @@ async def premium_usage_callback(
     query = update.callback_query
     await query.answer()
 
-    from database import get_usage, is_premium
+    user = update.effective_user
 
-    user_id = update.effective_user.id
-    usage = get_usage(user_id)
+    if not user:
+        return
+
+    usage = get_usage(user.id)
 
     ai_count = usage[0] if usage else 0
     text_count = usage[1] if usage else 0
     voice_count = usage[2] if usage else 0
 
-    premium = is_premium(user_id)
+    premium = is_premium(user.id)
 
     if premium:
-        limits = "Premium account: elevated limits."
-    else:
+        account_status = "💎 Premium Active"
         limits = (
-            f"AI: {ai_count}/{FREE_DAILY_AI_LIMIT}\n"
-            f"Text: {text_count}/{FREE_DAILY_TEXT_LIMIT}\n"
-            f"Voice: {voice_count}/{FREE_DAILY_VOICE_LIMIT}"
+            "You have elevated usage limits.\n"
+            "Your current usage:\n"
+            f"• AI: {ai_count}\n"
+            f"• Text: {text_count}\n"
+            f"• Voice: {voice_count}"
+        )
+    else:
+        account_status = "🆓 Free Plan"
+        limits = (
+            f"• AI: {ai_count}/{FREE_DAILY_AI_LIMIT}\n"
+            f"• Text: {text_count}/{FREE_DAILY_TEXT_LIMIT}\n"
+            f"• Voice: {voice_count}/{FREE_DAILY_VOICE_LIMIT}"
         )
 
     await query.message.reply_text(
         "📊 Your Daily Usage\n\n"
-        f"{limits}"
+        f"Account: {account_status}\n\n"
+        f"{limits}\n\n"
+        "Usage resets daily."
     )
