@@ -1,11 +1,12 @@
 
+
 import sqlite3
-from datetime import date
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import DATABASE_PATH
+from database import get_today
 
 
 def get_referral_count(user_id: int) -> int:
@@ -50,7 +51,7 @@ def register_referral(new_user_id: int, referrer_id: int) -> bool:
             (referrer_id, referred_id, created_at)
             VALUES (?, ?, ?)
             """,
-            (referrer_id, new_user_id, date.today().isoformat()),
+            (referrer_id, new_user_id, get_today()),
         )
 
         conn.execute(
@@ -67,17 +68,21 @@ async def referral_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+
+    if user is None or message is None:
+        return
 
     bot_username = context.bot.username
 
     referral_link = (
-        f"https://t.me/{bot_username}?start=ref_{user_id}"
+        f"https://t.me/{bot_username}?start=ref_{user.id}"
     )
 
-    count = get_referral_count(user_id)
+    count = get_referral_count(user.id)
 
-    await update.message.reply_text(
+    await message.reply_text(
         "🎁 Daily-Mate Referral Program\n\n"
         "Invite friends using your personal link:\n\n"
         f"{referral_link}\n\n"
