@@ -1,5 +1,4 @@
 
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -118,7 +117,12 @@ async def text_message(
     if not update.message or not update.message.text:
         return
 
-    user_id = update.effective_user.id
+    user = update.effective_user
+
+    if not user:
+        return
+
+    user_id = user.id
     text = update.message.text.strip()
 
     if not text:
@@ -152,19 +156,29 @@ async def text_message(
         await process_text(update, context, user_id, prompt)
         return
 
-    # Word counter does not need AI.
+    # Word Counter.
     if action == "wordcount":
+        if text_limit_reached(user_id):
+            await update.message.reply_text(
+                "⚠️ Daily Text Tools limit reached.\n"
+                "Upgrade to Premium for higher limits."
+            )
+            clear_text_state(context)
+            return
+
         words = text.split()
         lines = text.splitlines()
+        characters_without_spaces = len("".join(text.split()))
 
         await update.message.reply_text(
             "🔢 Text Statistics\n\n"
             f"Words: {len(words)}\n"
             f"Characters (with spaces): {len(text)}\n"
-            f"Characters (without spaces): {len(text.replace(' ', ''))}\n"
+            f"Characters (without whitespace): {characters_without_spaces}\n"
             f"Lines: {len(lines)}"
         )
 
+        increment_usage(user_id, "text")
         clear_text_state(context)
         return
 
@@ -218,7 +232,6 @@ async def process_text(
             "Your usage has not been charged.\n"
             "Please try sending your text again."
         )
-        # Keep selected tool active so user can retry.
         return
 
     except Exception:
@@ -226,7 +239,6 @@ async def process_text(
             "⚠️ Something went wrong. Please try again later.\n\n"
             "Your usage has not been charged."
         )
-        # Keep selected tool active so user can retry.
         return
 
     increment_usage(user_id, "text")
